@@ -1,0 +1,5 @@
+nflreadpy
+polars
+typer
+rapidfuzz
+
