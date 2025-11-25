@@ -96,6 +96,23 @@ def parse_player_list(player_spec: Optional[str]) -> List[str]:
     return players
 
 
+def parse_team_list(team_spec: Optional[str]) -> List[str]:
+    """
+    Parse comma-separated team names into a list.
+    
+    Args:
+        team_spec: Comma-separated team names or None
+        
+    Returns:
+        List of team name strings (trimmed)
+    """
+    if team_spec is None:
+        return []
+    
+    teams = [t.strip() for t in team_spec.split(",") if t.strip()]
+    return teams
+
+
 @app.callback(invoke_without_command=True)
 def main(
     seasons: Optional[str] = typer.Option(
@@ -122,16 +139,22 @@ def main(
         "-p",
         help="Player name to search for (fuzzy-matched). When provided, also generates a player-specific CSV file.",
     ),
+    team: Optional[str] = typer.Option(
+        None,
+        "--team",
+        "-t",
+        help="D/ST team name to search for (fuzzy-matched). When provided, also generates a team-specific CSV file.",
+    ),
     display: bool = typer.Option(
         False,
         "--display",
         "-d",
-        help="Display player statistics in console (only used with --player)",
+        help="Display player/team statistics in console (only used with --player or --team)",
     ),
     summary: bool = typer.Option(
         False,
         "--summary",
-        help="Generate summary statistics for specified players. Requires --player flag.",
+        help="Generate summary statistics for specified players/teams. Requires --player or --team flag.",
     ),
 ):
     """
@@ -142,6 +165,7 @@ def main(
     each position (QB, RB, WR/TE, K, D/ST).
 
     Use --player to also generate statistics for a specific player (fuzzy-matched by name).
+    Use --team to also generate statistics for a specific D/ST team (fuzzy-matched by name).
     """
     # Parse seasons
     if seasons:
@@ -156,9 +180,9 @@ def main(
     if week_list:
         typer.echo(f"Filtering to weeks: {week_list}")
     
-    # Check if summary is requested without player
-    if summary and not player:
-        typer.echo("Error: --summary requires --player flag to specify players to summarize", err=True)
+    # Check if summary is requested without player or team
+    if summary and not player and not team:
+        typer.echo("Error: --summary requires --player or --team flag to specify players/teams to summarize", err=True)
         raise typer.Exit(1)
 
     # Load data
@@ -200,27 +224,29 @@ def main(
         )
 
     # Handle summary mode
-    if summary and player:
+    if summary and (player or team):
         typer.echo("\nGenerating summary statistics...")
         
-        # Parse player list
+        # Parse player and team lists
         player_names = parse_player_list(player)
+        team_names = parse_team_list(team)
         matched_names = []
         
         # Find matches for each player
         for player_name in player_names:
-            # Try to find as a player first
             matched_player = find_player_by_name(stats_with_points_df, player_name)
-            
             if matched_player is not None:
                 matched_names.append(matched_player)
             else:
-                # Try as D/ST team
-                matched_team = find_team_by_name(dst_df, player_name)
-                if matched_team is not None:
-                    matched_names.append(matched_team)
-                else:
-                    typer.echo(f"Warning: No player or team found matching '{player_name}', skipping", err=True)
+                typer.echo(f"Warning: No player found matching '{player_name}', skipping", err=True)
+        
+        # Find matches for each team
+        for team_name in team_names:
+            matched_team = find_team_by_name(dst_df, team_name)
+            if matched_team is not None:
+                matched_names.append(matched_team)
+            else:
+                typer.echo(f"Warning: No team found matching '{team_name}', skipping", err=True)
         
         if not matched_names:
             typer.echo("Error: No valid players or teams found", err=True)
@@ -261,24 +287,25 @@ def main(
         typer.echo(f"Saved summary statistics to {filepath}")
     
     # Handle player/team lookup if requested (non-summary mode)
-    elif player:
-        typer.echo(f"\nSearching for player(s) or team(s): {player}")
+    elif player or team:
+        if player:
+            typer.echo(f"\nSearching for player(s): {player}")
+        if team:
+            typer.echo(f"\nSearching for team(s): {team}")
         
-        # Parse player list
+        # Parse player and team lists
         player_names = parse_player_list(player)
+        team_names = parse_team_list(team)
         
-        if not player_names:
-            typer.echo("Error: No valid player names provided", err=True)
+        if not player_names and not team_names:
+            typer.echo("Error: No valid player or team names provided", err=True)
             raise typer.Exit(1)
         
-        # Find matches for each player/team
+        # Find matches for each player
         matched_players = []
-        matched_teams = []
         all_player_dfs = []
-        all_team_dfs = []
         
         for player_name in player_names:
-            # Try to find as a player first
             matched_player = find_player_by_name(stats_with_points_df, player_name)
             
             if matched_player is not None:
@@ -297,25 +324,31 @@ def main(
                 else:
                     typer.echo(f"Warning: No data found for {matched_player}", err=True)
             else:
-                # Try as D/ST team
-                matched_team = find_team_by_name(dst_df, player_name)
-                if matched_team is not None:
-                    matched_teams.append(matched_team)
-                    typer.echo(f"Found D/ST team: {matched_team}")
-                    
-                    # Filter to matched team
-                    team_df = dst_df.filter(pl.col("team") == matched_team)
-                    
-                    # Apply week filter if specified
-                    if week_list is not None:
-                        team_df = team_df.filter(pl.col("week").is_in(week_list))
-                    
-                    if len(team_df) > 0:
-                        all_team_dfs.append(team_df)
-                    else:
-                        typer.echo(f"Warning: No data found for {matched_team} D/ST", err=True)
+                typer.echo(f"Warning: No player found matching '{player_name}', skipping", err=True)
+        
+        # Find matches for each team
+        matched_teams = []
+        all_team_dfs = []
+        
+        for team_name in team_names:
+            matched_team = find_team_by_name(dst_df, team_name)
+            if matched_team is not None:
+                matched_teams.append(matched_team)
+                typer.echo(f"Found D/ST team: {matched_team}")
+                
+                # Filter to matched team
+                team_df = dst_df.filter(pl.col("team") == matched_team)
+                
+                # Apply week filter if specified
+                if week_list is not None:
+                    team_df = team_df.filter(pl.col("week").is_in(week_list))
+                
+                if len(team_df) > 0:
+                    all_team_dfs.append(team_df)
                 else:
-                    typer.echo(f"Warning: No player or team found matching '{player_name}', skipping", err=True)
+                    typer.echo(f"Warning: No data found for {matched_team} D/ST", err=True)
+            else:
+                typer.echo(f"Warning: No team found matching '{team_name}', skipping", err=True)
         
         if not all_player_dfs and not all_team_dfs:
             typer.echo("Error: No valid data found for any of the specified players or teams", err=True)
@@ -396,8 +429,9 @@ def main(
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
         
-        # Generate filename based on number of players
-        if len(player_names) == 1:
+        # Generate filename based on number of players/teams
+        total_items = len(matched_players) + len(matched_teams)
+        if total_items == 1:
             # Single player/team - use their name
             if matched_players:
                 safe_name = "".join(c if c.isalnum() or c in (" ", "-", "_") else "_" for c in matched_players[0])
