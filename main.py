@@ -372,27 +372,40 @@ def main(
             # Use player dataframe column order as base (has more columns)
             player_cols = combined_player_df.columns
             team_cols = set(combined_team_df.columns)
-            
-            # Add missing columns to team dataframe (fill with None)
+            player_schema = combined_player_df.schema
+            team_schema = combined_team_df.schema
+
+            # Add missing columns to team dataframe (fill with None and match dtypes)
             for col in player_cols:
                 if col not in team_cols:
-                    combined_team_df = combined_team_df.with_columns(pl.lit(None).alias(col))
-            
+                    dtype = player_schema.get(col)
+                    if dtype is None:
+                        combined_team_df = combined_team_df.with_columns(pl.lit(None).alias(col))
+                    else:
+                        combined_team_df = combined_team_df.with_columns(pl.lit(None, dtype=dtype).alias(col))
+
             # Add any team-only columns to player dataframe
             for col in team_cols:
                 if col not in player_cols:
-                    combined_player_df = combined_player_df.with_columns(pl.lit(None).alias(col))
-            
+                    dtype = team_schema.get(col)
+                    if dtype is None:
+                        combined_player_df = combined_player_df.with_columns(pl.lit(None).alias(col))
+                    else:
+                        combined_player_df = combined_player_df.with_columns(pl.lit(None, dtype=dtype).alias(col))
+
             # Ensure same column order (use player column order)
             all_cols = list(player_cols) + [col for col in team_cols if col not in player_cols]
             combined_player_df = combined_player_df.select(all_cols)
             combined_team_df = combined_team_df.select(all_cols)
-            
+
+            combined_player_df = combined_player_df.sort(["player_id", "season", "week"])
+            combined_team_df = combined_team_df.sort(["team", "season", "week"])
+
             output_df = pl.concat([combined_player_df, combined_team_df])
         elif combined_player_df is not None:
-            output_df = combined_player_df
+            output_df = combined_player_df.sort(["season", "week"])
         else:
-            output_df = combined_team_df
+            output_df = combined_team_df.sort(["season", "week"])
         
         # Prepare output columns
         base_cols = ["season", "week"]
@@ -411,7 +424,7 @@ def main(
         # Filter to only columns that exist
         available_cols = [col for col in output_cols if col in output_df.columns]
         output_df = output_df.select(available_cols)
-        
+
         # Display in console if requested
         if display:
             typer.echo("\n" + "=" * 80)
